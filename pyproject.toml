@@ -1,0 +1,13 @@
+[project]
+name = "stickshaker"
+version = "0.1.0"
+description = "Tape-loading sounds for AI coding agent memory and compaction events"
+requires-python = ">=3.11"
+dependencies = [
+    "numpy>=1.26",
+    "sounddevice>=0.4.6",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
