@@ -169,32 +169,57 @@ The synth uses the ZX Spectrum ROM tape format. Times are in Z80 T-states at 3.5
 | Bit 0 | 2 × 855 T (approximately 2 kHz) |
 | Bit 1 | 2 × 1710 T (approximately 1 kHz) |
 
-Procedure in `render()`:
+`plan()` makes all timing and pitch decisions. `render()` turns the plan into samples. The tests examine `plan()` directly.
 
-1. Compress `data` with zlib. Compressed data is almost random. This gives a sound that is similar to a real tape.
-2. For `save`, add a 17-byte Spectrum header block. The header contains `size`. Then add a gap of 0.12 seconds.
-3. Add the data block: flag byte `0xFF`, payload, XOR checksum.
-4. Calculate the target duration: `clamp(0.4 + 0.6 × log2(1 + KB), 0.5, 4.0)` seconds.
-5. Calculate the time scale. The data bits must fill the target duration. The scale is between 1.0 (real Spectrum speed) and 0.25 (4 × turbo).
-6. If the data is too long at 4 × turbo, cut the data block.
-7. Give part of the duration to the pilot tone: 30 % for `save`, 20 % for `load`, 10 % for `memory`.
+Procedure in `plan()`:
 
-Small payloads play at real Spectrum pitch. Large payloads play faster and at a higher pitch.
+1. Use the raw bytes of `data`. Do not compress them. Compression removes the line structure (see step 6).
+2. Calculate the tape speed: voice speed × content pitch × size turbo.
+   - Voice speed comes from the kind (see "Voices").
+   - Content pitch comes from a hash of `data`. It is between 0.9 and 1.1. Different content gets a different pitch. The same content always gets the same pitch.
+   - Size turbo is between 1.0 and 1.4 (`MAX_TURBO`). It increases on a log scale with `size` and reaches 1.4 at 256 KB (`TURBO_FULL_KB`).
+3. Calculate the target duration: `clamp(0.4 + 0.6 × log2(1 + KB), 0.5, 4.0)` seconds.
+4. If the voice has a header, add a 17-byte Spectrum header block. The header contains `size`. Add a gap of 0.12 seconds after it.
+5. Add the data block: flag byte `0xFF`, payload, XOR checksum.
+6. Add a pause after each newline byte. The pause is 21000 T-states (`LINE_GAP_T`, 6 ms at real speed). The mix makes the pause silent. Code with short lines stutters. Prose plays in long runs. JSON on one line plays without pauses.
+7. If the data is too long for the target duration at this speed, keep the longest start of the data that fits.
+8. Give all remaining time to the pilot tone. The pilot gets a minimum share of the duration from the voice. A small payload thus gets a long pilot tone and a short burst of data.
+
+The tape speed sets the pitch. The target duration sets the length. The two are independent: the pilot and the cut absorb the difference.
+
+Pitch and duration cannot both be fixed while the data fills the time exactly. An earlier design fitted the data to the duration first and then shifted the speed. For mid-size payloads, the shift cancelled out, and all voices had the same pitch.
+
+### Voices
+
+| Kind | Speed | Minimum pilot | Header block |
+|---|---|---|---|
+| `memory` | 1.25 | 10 % | No |
+| `save` | 1.0 | 30 % | Yes |
+| `load` | 0.8 | 20 % | Yes |
+
+The content pitch range (±10 %) is smaller than the steps between voices. Size turbo can still make a large `save` higher than a small `memory`. The header and pilot length still identify the kind.
 
 ### Lo-fi chain
 
 ```
-square() ──▶ grit() ──▶ quantize ──▶ sample-and-hold ──▶ tone() ──▶ fade ──▶ × AMP
- 8 kHz        8 kHz      4 bits        8 kHz → 44.1 kHz    44.1 kHz
+square() ──▶ grit() ──▶ quantize ──▶ mix ──▶ sample-and-hold ──▶ tone() ──▶ × AMP ──▶ fade
+22.05 kHz    22.05 kHz   4 bits                22.05 → 44.1 kHz    44.1 kHz
 ```
 
 | Stage | Function | Effect |
 |---|---|---|
-| `square()` | Makes a ±1 square wave at `CRUSH_RATE` (8 kHz). No band limit. Adds slow wow/flutter. | Aliasing. |
-| `grit()` | Adds noise, a one-pole tape low-pass, dropouts, and crackle. | Tape texture. |
+| `square()` | Makes a ±1 square wave at `CRUSH_RATE` (22050 Hz). No band limit. Adds slow wow/flutter. | Aliasing. |
+| `grit()` | Adds noise, a one-pole tape low-pass at `TAPE_LP_HZ` (8 kHz), dropouts, and crackle. | Tape texture. Soft edges, but the bit tones stay clear. |
 | Quantize | Rounds to `CRUSH_BITS` (4 bits). | Bit crush. The low-pass ramps become steps. |
-| Sample-and-hold | Repeats samples up to 44.1 kHz. No interpolation filter. | Keeps the aliasing images. |
+| Mix | Multiplies the data section by `DATA_LEVEL` (0.5, −6 dB). Pilot and sync stay at 1.0. A 10 ms ramp connects the two levels. | The data section sounds like broadband noise. This keeps it below the pilot tone. |
+| Sample-and-hold | Repeats each sample 2 times up to 44.1 kHz. No interpolation filter. | Keeps the aliasing images. |
 | `tone()` | FFT EQ: 2nd-order high-pass at 700 Hz. | Removes low frequencies. The curve agrees with a spectrum of real Spectrum tape audio. |
+
+Each half-pulse must be longer than one sample at `CRUSH_RATE`. If it is shorter, the bit pattern cannot show, and the data section becomes a wash of noise. At 22050 Hz and 1.4 × turbo, the shortest half-pulse (bit 0) is approximately 4 samples. For this reason, `MIN_SCALE` and `CRUSH_RATE` must change together. Earlier values (7350 Hz, 4 × turbo, low-pass at 800 Hz) made a wash in the low-mid frequencies.
+
+`CRUSH_RATE` must divide 44100 exactly. Then each sample repeats the same number of times. With a rate such as 8000 Hz, the repeat count changes between 5 and 6 in a pattern that repeats at 100 Hz. This pattern adds a buzz at 100 Hz and its harmonics.
+
+The sound fades in over 30 ms and fades out over 5 ms.
 
 Noise layers in `grit()`:
 
@@ -208,7 +233,7 @@ Noise layers in `grit()`:
 
 All noise is cubed Gaussian noise. This noise is mostly quiet and has sharp peaks. It is less flat than white noise.
 
-The output level is `AMP` (0.15). The macOS system volume controls the final level. There is no volume control in stickshaker.
+The output level is `AMP` (0.1). The macOS system volume controls the final level. There is no volume control in stickshaker.
 
 ## Daemon life cycle
 
@@ -286,6 +311,7 @@ Hooks load when a Claude Code session starts. After you install or change the ho
 | `tests/test_memory.py` | Memory scope, baseline, change detection, Bash writes, bursts. |
 | `tests/test_daemon.py` | Real socket round trip, socket permissions, one daemon only, old socket, queue drops. |
 | `tests/test_install.py` | Merge, idempotence, mode change, uninstall, backup. |
+| `tests/test_synth.py` | Plan decisions: voices, content pitch, durations, truncation, newline pauses. |
 
 The tests make no sound. They replace `render` and `play` with fakes.
 
