@@ -1,5 +1,3 @@
-import json
-
 import pytest
 
 from stickshaker.events import Event, from_hook
@@ -23,23 +21,21 @@ def test_precompact_missing_transcript_is_silent(tracker):
     assert from_hook({"hook_event_name": "PreCompact", "transcript_path": "/nope"}, tracker) is None
 
 
-def test_session_start_compact_uses_summary(tracker, tmp_path):
-    t = tmp_path / "t.jsonl"
-    summary = {"isCompactSummary": True, "message": {"content": [{"type": "text", "text": "SUMMARY"}]}}
-    t.write_text(json.dumps({"type": "user"}) + "\n" + json.dumps(summary) + "\n")
-    ev = from_hook({"hook_event_name": "SessionStart", "source": "compact", "transcript_path": str(t)}, tracker)
-    assert ev == Event("load", b"SUMMARY", 7, "claude")
+def test_post_compact_uses_compact_summary(tracker):
+    payload = {"hook_event_name": "PostCompact", "trigger": "manual", "compact_summary": "SUMMARY"}
+    assert from_hook(payload, tracker) == Event("load", b"SUMMARY", 7, "claude")
 
 
-def test_session_start_compact_falls_back_to_tail(tracker, tmp_path):
+def test_post_compact_without_summary_falls_back_to_tail(tracker, tmp_path):
     t = tmp_path / "t.jsonl"
     t.write_text('{"type": "user"}\n')
-    ev = from_hook({"hook_event_name": "SessionStart", "source": "compact", "transcript_path": str(t)}, tracker)
+    payload = {"hook_event_name": "PostCompact", "trigger": "auto", "transcript_path": str(t)}
+    ev = from_hook(payload, tracker)
     assert ev is not None and ev.kind == "load" and ev.data == b'{"type": "user"}\n'
 
 
-def test_session_start_other_sources_are_silent(tracker, tmp_path):
-    assert from_hook({"hook_event_name": "SessionStart", "source": "startup"}, tracker) is None
+def test_session_start_is_silent(tracker):
+    assert from_hook({"hook_event_name": "SessionStart", "source": "compact"}, tracker) is None
 
 
 def test_unknown_event_is_silent(tracker):

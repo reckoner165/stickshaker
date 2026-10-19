@@ -10,7 +10,7 @@ This document describes the components, the data flow, and the contracts between
  Claude Code                         stickshaker daemon (one process)
 ┌─────────────────┐  hook JSON   ┌──────────────────────────────────────────────┐
 │ PreCompact      │─────────────▶│ server.py   read one JSON object, close      │
-│ SessionStart    │  Unix socket │     │                                        │
+│ PostCompact     │  Unix socket │     │                                        │
 │ PostToolUse     │  nc -U       │     ▼                                        │
 └─────────────────┘              │ events.py   payload ──▶ Event or None        │
                                  │     │        (memory.py checks memory files) │
@@ -71,8 +71,10 @@ Steps 1 to 5 take approximately 2 ms. Step 6 occurs on the worker thread. Claude
 | Hook event | Matcher | Sound |
 |---|---|---|
 | `PreCompact` | (none) | `save` |
-| `SessionStart` | `compact` | `load` |
+| `PostCompact` | (none) | `load` |
 | `PostToolUse` | `Write\|Edit\|MultiEdit\|NotebookEdit\|Bash` | `memory`, only if a memory file changed |
+
+The hook events and their input fields are documented in the [Claude Code hooks reference](https://code.claude.com/docs/en/hooks). `PreCompact` and `PostCompact` fire for `/compact`, for auto-compact, and for idle compaction.
 
 Each hook has a timeout of 5 seconds. Thus a daemon that does not respond can stop Claude for 5 seconds maximum.
 
@@ -102,7 +104,7 @@ Mapping from hook payload to `Event`:
 | Hook | `data` | `size` |
 |---|---|---|
 | `PreCompact` | The last 32 KB of the transcript. | The full transcript size. |
-| `SessionStart` (`compact`) | The text of the compaction summary. If the summary is not found, the last 32 KB of the transcript. | Length of `data`. |
+| `PostCompact` | `compact_summary` from the payload. This is the summary that the compaction made. If the field is empty, the last 32 KB of the transcript. | Length of `data`. |
 | `PostToolUse` | The new lines in the memory files that changed. | Length of `data`. |
 
 ### Synth
@@ -293,7 +295,6 @@ Unix socket paths on macOS have a limit of approximately 104 bytes. The tests ma
 
 | Item | Status |
 |---|---|
-| Compaction summary format | Not verified. `events.py` looks for an `isCompactSummary` entry. If it is not found, `load` uses the end of the transcript. Verify with a real `/compact`. |
 | Output device change | PortAudio can continue to use the old output device after you change the device. Not examined. |
 | Spectrum notches | The reference spectrum has dips at approximately 4.35 kHz and 9 kHz. Add them to `tone()` later. |
 | Codex support | Stage 4. Codex keeps memory in `~/.codex/memories_1.sqlite` and session logs in `~/.codex/sessions/`. Use the same snapshot method. |

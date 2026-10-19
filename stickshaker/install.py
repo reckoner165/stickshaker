@@ -20,7 +20,7 @@ HOOK_TIMEOUT = 5  # seconds; caps how long a wedged daemon could stall Claude
 # (event, matcher) pairs; None means the event takes no matcher.
 HOOKS: list[tuple[str, str | None]] = [
     ("PreCompact", None),
-    ("SessionStart", "compact"),
+    ("PostCompact", None),
     # Any tool that can write files; the daemon checks the memory files themselves.
     ("PostToolUse", "Write|Edit|MultiEdit|NotebookEdit|Bash"),
 ]

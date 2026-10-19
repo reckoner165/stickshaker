@@ -8,9 +8,9 @@ OTHER_HOOK = {"type": "command", "command": "echo other"}
 def test_install_into_empty_settings():
     s: dict = {}
     install.add_hooks(s, debug=False)
-    assert set(s["hooks"]) == {"PreCompact", "SessionStart", "PostToolUse"}
-    assert s["hooks"]["SessionStart"][0]["matcher"] == "compact"
+    assert set(s["hooks"]) == {"PreCompact", "PostCompact", "PostToolUse"}
     assert "matcher" not in s["hooks"]["PreCompact"][0]
+    assert "matcher" not in s["hooks"]["PostCompact"][0]
     hook = s["hooks"]["PostToolUse"][0]["hooks"][0]
     assert hook["command"].endswith("|| true") and hook["timeout"] == install.HOOK_TIMEOUT
 
@@ -61,9 +61,16 @@ def test_save_backs_up_and_writes(tmp_path):
     install.add_hooks(s, debug=False)
     backup = install.save(p, s)
     assert backup is not None and json.loads(backup.read_text()) == {"model": "opus"}
-    assert install.installed_hooks(install.load(p)).keys() == {"PreCompact", "SessionStart", "PostToolUse"}
+    assert install.installed_hooks(install.load(p)).keys() == {"PreCompact", "PostCompact", "PostToolUse"}
     assert not (tmp_path / "settings.json.stickshaker-tmp").exists()
 
 
 def test_load_missing_file_is_empty(tmp_path):
     assert install.load(tmp_path / "nope.json") == {}
+
+
+def test_reinstall_removes_old_session_start_entry():
+    old = {"type": "command", "command": "nc -U /Users/x/.stickshaker.sock || true", "timeout": 5}
+    s = {"hooks": {"SessionStart": [{"matcher": "compact", "hooks": [old]}]}}
+    install.add_hooks(s, debug=False)
+    assert "SessionStart" not in s["hooks"]
