@@ -47,3 +47,10 @@ def test_doctor_test_event_always_plays(tracker):
     from stickshaker.doctor import TEST_EVENT
 
     assert from_hook(TEST_EVENT, tracker) is not None
+
+
+def test_transcript_outside_allowed_roots_is_never_read(tracker, tmp_path_factory):
+    outside = tmp_path_factory.mktemp("elsewhere") / "t.jsonl"
+    outside.write_bytes(b"private conversation")
+    ev = from_hook({"hook_event_name": "PreCompact", "transcript_path": str(outside)}, tracker)
+    assert ev is not None and b"private conversation" not in ev.data  # payload fallback

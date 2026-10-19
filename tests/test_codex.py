@@ -127,3 +127,14 @@ def test_watcher_plays_one_sound_per_burst(tmp_path):
         assert set(ev.data.splitlines()) == {b"first", b"second"}  # old.md stayed a silent baseline
     finally:
         w.stop()
+
+
+def test_watcher_skips_links_out_of_folder(tmp_path, tmp_path_factory):
+    folder = tmp_path / "memories"
+    folder.mkdir()
+    outside = tmp_path_factory.mktemp("elsewhere") / "secret.md"
+    outside.write_text("private\n")
+    (folder / "link.md").symlink_to(outside)
+    (folder / "real.md").write_text("ok\n")
+    w = CodexMemoryWatcher(Collector().submit, folder)
+    assert [p.name for p in w.files()] == ["real.md"]

@@ -1,8 +1,8 @@
 """Detect agent memory writes by comparing a few known files to their last-seen state.
 
 Scope is deliberately tiny: the session's own ~/.claude/projects/<project>/memory/
-folder, ~/.claude/CLAUDE.md, and a CLAUDE.md/AGENTS.md only when a tool call
-names that exact file. Nothing else on disk is ever listed or read.
+folder and ~/.claude/CLAUDE.md. Paths from hook payloads are only used when
+they resolve inside ~/.claude. Nothing outside it is ever listed or read.
 
 A check runs only when a hook fires; between hooks nothing polls.
 """
@@ -13,7 +13,6 @@ from collections.abc import Iterable
 from pathlib import Path
 
 CLAUDE_HOME = Path.home() / ".claude"
-MEMORY_NAMES = {"CLAUDE.md", "AGENTS.md"}
 RECENT_SECS = 5.0  # a first-seen file modified this recently counts as just written
 
 
@@ -26,25 +25,27 @@ def added_bytes(old: bytes, new: bytes) -> bytes:
 
 class MemoryTracker:
     def __init__(self, claude_home: Path = CLAUDE_HOME):
-        self.projects = claude_home / "projects"
-        self.user_memory = claude_home / "CLAUDE.md"
+        self.home = claude_home.resolve()
+        self.projects = self.home / "projects"
+        self.user_memory = self.home / "CLAUDE.md"
         self._seen: dict[Path, tuple[float, bytes]] = {}
         self._lock = threading.Lock()  # socket handlers run on separate threads
 
     def is_memory_file(self, path: Path) -> bool:
-        if path.name in MEMORY_NAMES:
+        """~/.claude/CLAUDE.md or ~/.claude/projects/<project>/memory/<name>.md, after resolving links."""
+        path = path.resolve()
+        if path == self.user_memory:
             return True
-        # ~/.claude/projects/<project>/memory/<name>.md
         return path.suffix == ".md" and path.parent.name == "memory" and path.parent.parent.parent == self.projects
 
     def candidates(self, transcript_path: str, file_path: str = "") -> list[Path]:
-        """The only files a check may look at for this hook call."""
+        """The only files a check may look at for this hook call. All inside ~/.claude."""
         paths = [self.user_memory]
-        transcript = Path(transcript_path) if transcript_path else None
+        transcript = Path(transcript_path).resolve() if transcript_path else None
         if transcript and transcript.parent.parent == self.projects:
-            paths += sorted((transcript.parent / "memory").glob("*.md"))
+            paths += [p for p in sorted((transcript.parent / "memory").glob("*.md")) if self.is_memory_file(p)]
         if file_path and self.is_memory_file(Path(file_path)):
-            paths.append(Path(file_path))
+            paths.append(Path(file_path).resolve())
         return list(dict.fromkeys(paths))
 
     def changes(self, paths: Iterable[Path]) -> bytes:

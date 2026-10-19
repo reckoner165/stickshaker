@@ -48,17 +48,27 @@ def test_candidates_stay_in_scope(home):
     m.write_text("x")
     t = MemoryTracker(home)
     paths = t.candidates(transcript(home), "/elsewhere/notes/memory/b.md")
-    assert paths == [home / "CLAUDE.md", m]  # outside-~/.claude memory path ignored
+    assert paths == [home.resolve() / "CLAUDE.md", m.resolve()]  # outside-~/.claude memory path ignored
 
 
-def test_candidates_include_named_tool_target(home):
+def test_repo_files_are_never_candidates(home):
     t = MemoryTracker(home)
-    assert t.candidates(transcript(home), "/repo/CLAUDE.md")[-1].as_posix() == "/repo/CLAUDE.md"
+    for outside in ("/repo/CLAUDE.md", "/repo/AGENTS.md", "/repo/memory/notes.md"):
+        assert t.candidates(transcript(home), outside) == [home.resolve() / "CLAUDE.md"]
+
+
+def test_symlink_out_of_home_is_not_a_memory_file(home, tmp_path_factory):
+    outside = tmp_path_factory.mktemp("elsewhere") / "secret.md"
+    outside.write_text("private\n")
+    link = memfile(home, "link.md")
+    link.symlink_to(outside)
+    t = MemoryTracker(home)
+    assert link.resolve() not in t.candidates(transcript(home))
 
 
 def test_transcript_outside_projects_adds_no_folder(home, tmp_path):
     t = MemoryTracker(home)
-    assert t.candidates(str(tmp_path / "x.jsonl")) == [home / "CLAUDE.md"]
+    assert t.candidates(str(tmp_path / "x.jsonl")) == [home.resolve() / "CLAUDE.md"]
 
 
 def test_old_file_first_seen_is_silent_baseline(home):

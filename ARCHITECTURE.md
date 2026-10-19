@@ -133,13 +133,20 @@ Claude can write memory with many tools. For example, Claude can use the Bash to
 
 ### Scope
 
+Rule: the daemon reads files only inside `~/.claude` and `~/.codex`. It never reads files in other user directories, for example repositories. This rule applies to every path, also to paths in hook payloads.
+
 For each `PostToolUse` hook, the daemon examines only these files:
 
 1. `~/.claude/projects/<project>/memory/*.md` for the current session. The daemon gets this folder from `transcript_path` in the hook payload.
 2. `~/.claude/CLAUDE.md`.
-3. A `CLAUDE.md` or `AGENTS.md` file, only if the tool call names that file in `tool_input.file_path`.
 
-The daemon does not search directories. It does not read other files. It does not poll between hooks.
+If `tool_input.file_path` is one of these files, the daemon also uses it. If it is a different file, the daemon ignores it.
+
+The daemon resolves symbolic links before it does these checks. A link inside `~/.claude` that points outside it is ignored.
+
+Transcripts: the daemon reads a transcript only if its path resolves inside `~/.claude` or `~/.codex` (`ALLOWED_ROOTS` in `events.py`). If not, the sound uses the hook payload.
+
+The daemon does not search directories. It does not poll between hooks.
 
 One check costs approximately 70 µs for a folder with 15 files. The `nc` process of the hook costs approximately 50 times more.
 
@@ -153,9 +160,9 @@ One check costs approximately 70 µs for a folder with 15 files. The `nc` proces
 - Changes to many files in one check make one event. For example, a memory file and `MEMORY.md` make one sound.
 - Each change makes a sound one time only. The next check sees the new snapshot.
 
-### Known limit
+### Out of scope
 
-The daemon does not find a Bash edit to a `CLAUDE.md` or `AGENTS.md` in a repository. The daemon would have to search the file system to find these edits. This is not permitted by design.
+Changes to `CLAUDE.md` or `AGENTS.md` files in repositories make no sound. These files are outside `~/.claude` and `~/.codex`.
 
 ## Codex
 
@@ -190,7 +197,7 @@ Codex runs a new hook only after you trust it. Open the Codex CLI and run `/hook
 Codex writes memories in a background job after a chat is idle. No tool call occurs, so no hook starts. For this reason, the daemon watches one folder: `~/.codex/memories/`.
 
 - The watcher uses FSEvents. It does not poll.
-- It watches only `~/.codex/memories/` and its subfolders.
+- It watches only `~/.codex/memories/` and its subfolders. It ignores links that point outside this folder.
 - It waits 1 second after the last change (`DEBOUNCE_SECS`). Then it makes one `memory` event for all changes. It uses the same `MemoryTracker` comparison as Claude Code memory.
 - Codex memories are off by default. If the folder does not exist, the watcher does not start. The daemon tries again when a Codex hook arrives.
 

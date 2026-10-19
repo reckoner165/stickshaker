@@ -7,12 +7,16 @@ bytes get encoded for each.
 import json
 import time
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any
 
 from stickshaker.memory import MemoryTracker
 from stickshaker.synth import Kind
 
 TAIL_BYTES = 32 * 1024  # bytes of a transcript actually encoded for compaction
+
+# The daemon only reads files inside these folders, whatever a payload says.
+ALLOWED_ROOTS: tuple[Path, ...] = (Path.home() / ".claude", Path.home() / ".codex")
 
 
 @dataclass(frozen=True)
@@ -24,8 +28,18 @@ class Event:
     received: float = field(default_factory=time.monotonic, compare=False)
 
 
+def is_allowed(path: str) -> bool:
+    """True if `path`, after resolving links, is inside one of ALLOWED_ROOTS."""
+    if not path:
+        return False
+    resolved = Path(path).resolve()
+    return any(resolved.is_relative_to(root.resolve()) for root in ALLOWED_ROOTS)
+
+
 def read_tail(path: str, n: int) -> tuple[bytes, int] | None:
-    """Last `n` bytes of a file and its full size, or None if unreadable."""
+    """Last `n` bytes of a file and its full size, or None if unreadable or not allowed."""
+    if not is_allowed(path):
+        return None
     try:
         with open(path, "rb") as f:
             size = f.seek(0, 2)

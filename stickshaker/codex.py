@@ -45,7 +45,13 @@ class CodexMemoryWatcher(FileSystemEventHandler):
         return self._observer is not None
 
     def files(self) -> list[Path]:
-        return sorted(p for p in self.folder.rglob("*") if p.is_file() and not p.name.startswith("."))
+        """Regular files inside the folder. Links that resolve outside it are skipped."""
+        root = self.folder.resolve()
+        return sorted(
+            p
+            for p in self.folder.rglob("*")
+            if p.is_file() and not p.name.startswith(".") and p.resolve().is_relative_to(root)
+        )
 
     def ensure_started(self) -> bool:
         """Start watching if the folder exists. Safe to call repeatedly."""

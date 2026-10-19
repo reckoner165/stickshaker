@@ -4,6 +4,8 @@
 
 stickshaker plays a ZX Spectrum tape sound when Claude Code writes memory or compacts its context. The synth makes the sound from the bytes of the event, so different data makes a different sound.
 
+stickshaker reads files only in `~/.claude` and `~/.codex`. It does not read files in other directories on your computer.
+
 For the design, see [ARCHITECTURE.md](ARCHITECTURE.md).
 
 ## Requirements
