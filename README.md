@@ -59,6 +59,21 @@ For the design, see [ARCHITECTURE.md](ARCHITECTURE.md).
 
 The daemon log shows each event and each sound.
 
+### Codex (optional)
+
+stickshaker also plays sounds for Codex compaction and Codex memory writes. This support is based on the Codex docs only. It is not tested with a real Codex.
+
+1. Install the Codex hooks in `~/.codex/hooks.json`:
+
+   ```sh
+   uv run stickshaker install-hooks --codex
+   ```
+
+2. Open the Codex CLI and run `/hooks`. Trust the stickshaker hooks. Codex does not run a new hook before you trust it.
+3. To get sounds for Codex memory writes, turn on Codex memories. In the Codex app, go to **Settings > Personalization**. The daemon watches `~/.codex/memories/`.
+
+To remove the Codex hooks, run `uv run stickshaker uninstall-hooks --codex`.
+
 ### Debug mode
 
 In debug mode, a daemon that is not available shows as a hook error in Claude Code. Claude does not stop.

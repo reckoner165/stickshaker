@@ -17,8 +17,9 @@ def test_precompact_encodes_tail_but_sizes_whole_file(tracker, tmp_path, monkeyp
     assert ev == Event("save", b"0123456789", 110, "claude")
 
 
-def test_precompact_missing_transcript_is_silent(tracker):
-    assert from_hook({"hook_event_name": "PreCompact", "transcript_path": "/nope"}, tracker) is None
+def test_precompact_missing_transcript_falls_back_to_payload(tracker):
+    ev = from_hook({"hook_event_name": "PreCompact", "transcript_path": "/nope"}, tracker)
+    assert ev is not None and ev.kind == "save" and b"PreCompact" in ev.data
 
 
 def test_post_compact_uses_compact_summary(tracker):
@@ -40,3 +41,9 @@ def test_session_start_is_silent(tracker):
 
 def test_unknown_event_is_silent(tracker):
     assert from_hook({"hook_event_name": "Stop"}, tracker) is None
+
+
+def test_doctor_test_event_always_plays(tracker):
+    from stickshaker.doctor import TEST_EVENT
+
+    assert from_hook(TEST_EVENT, tracker) is not None

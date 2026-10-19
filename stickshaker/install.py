@@ -1,4 +1,4 @@
-"""Add/remove stickshaker's hooks in Claude Code's settings.json.
+"""Add/remove stickshaker's hooks in Claude Code's settings.json or Codex's hooks.json.
 
 Merges rather than overwrites: only entries whose command talks to our socket
 are touched, so other hooks and settings are left alone. Installing twice, or
@@ -8,6 +8,7 @@ switching between silent and debug mode, replaces our entries in place.
 import json
 import os
 import shutil
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -26,13 +27,39 @@ HOOKS: list[tuple[str, str | None]] = [
 ]
 
 
-def hook_command(debug: bool) -> str:
+@dataclass(frozen=True)
+class Target:
+    """An agent whose hook config we manage."""
+
+    name: str
+    settings_path: Path
+    hooks: list[tuple[str, str | None]]
+    tag: str | None  # source name added to the payload by the hook command
+
+
+CLAUDE = Target("claude", SETTINGS_PATH, HOOKS, None)
+# Codex: compaction only. Codex writes memories from a background job, not via
+# tool calls, so the daemon watches ~/.codex/memories/ instead (codex.py).
+# Hook format per https://learn.chatgpt.com/docs/hooks
+CODEX = Target("codex", Path.home() / ".codex" / "hooks.json", [("PreCompact", None), ("PostCompact", None)], "codex")
+TARGETS = {t.name: t for t in (CLAUDE, CODEX)}
+
+
+def tag_command(source: str) -> str:
+    """sed that inserts "stickshaker_source" as the first key of the JSON payload."""
+    return f"""sed '1s/^{{/{{"stickshaker_source":"{source}",/'"""
+
+
+def hook_command(debug: bool, target: Target = CLAUDE) -> str:
     """Silent mode swallows failures; debug mode lets them surface as hook errors.
 
     Debug exits non-zero (1), which Claude Code shows to the user as a
-    non-blocking error. It never uses exit 2, which would feed into Claude.
+    non-blocking error. It never uses exit 2, which would feed into the agent.
+    Codex documents no behavior for exit 1 on compaction hooks.
     """
     cmd = f"nc -U {SOCKET_PATH}"
+    if target.tag:
+        cmd = f"{tag_command(target.tag)} | {cmd}"
     return cmd if debug else f"{cmd} || true"
 
 
@@ -62,15 +89,15 @@ def remove_hooks(settings: dict[str, Any]) -> int:
     return removed
 
 
-def add_hooks(settings: dict[str, Any], debug: bool) -> None:
+def add_hooks(settings: dict[str, Any], debug: bool, target: Target = CLAUDE) -> None:
     """Add our hook entries in place, replacing any previous ones of ours."""
     remove_hooks(settings)
     hooks = settings.setdefault("hooks", {})
-    for event, matcher in HOOKS:
+    for event, matcher in target.hooks:
         group: dict[str, Any] = {}
         if matcher is not None:
             group["matcher"] = matcher
-        group["hooks"] = [{"type": "command", "command": hook_command(debug), "timeout": HOOK_TIMEOUT}]
+        group["hooks"] = [{"type": "command", "command": hook_command(debug, target), "timeout": HOOK_TIMEOUT}]
         hooks.setdefault(event, []).append(group)
 
 

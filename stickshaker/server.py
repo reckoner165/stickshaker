@@ -14,6 +14,7 @@ import time
 from pathlib import Path
 from typing import Any
 
+from stickshaker.codex import CodexMemoryWatcher
 from stickshaker.events import from_hook
 from stickshaker.memory import MemoryTracker
 from stickshaker.player import Player
@@ -79,6 +80,9 @@ class _Handler(socketserver.BaseRequestHandler):
             log.debug("connection without a JSON object")
             return
         name = payload.get("hook_event_name")
+        watcher = self.server.codex_watcher
+        if payload.get("stickshaker_source") == "codex" and watcher and not watcher.running:
+            watcher.ensure_started()  # Codex memories may have been turned on since startup
         event = from_hook(payload, self.server.tracker)
         ms = (time.monotonic() - start) * 1000
         if event is None:
@@ -95,9 +99,16 @@ class _Handler(socketserver.BaseRequestHandler):
 class HookServer(socketserver.ThreadingUnixStreamServer):
     daemon_threads = True
 
-    def __init__(self, player: Player, path: Path = SOCKET_PATH, tracker: MemoryTracker | None = None):
+    def __init__(
+        self,
+        player: Player,
+        path: Path = SOCKET_PATH,
+        tracker: MemoryTracker | None = None,
+        codex_watcher: CodexMemoryWatcher | None = None,
+    ):
         self.player = player
         self.tracker = tracker or MemoryTracker()
+        self.codex_watcher = codex_watcher
         self.path = Path(path)
         claim_socket(self.path)
         super().__init__(str(self.path), _Handler)

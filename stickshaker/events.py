@@ -4,6 +4,7 @@ This is the only place that knows which agent events make a sound and which
 bytes get encoded for each.
 """
 
+import json
 import time
 from dataclasses import dataclass, field
 from typing import Any
@@ -35,31 +36,38 @@ def read_tail(path: str, n: int) -> tuple[bytes, int] | None:
 
 
 def from_hook(payload: dict[str, Any], tracker: MemoryTracker) -> Event | None:
-    """Map a Claude Code hook payload to an Event.
+    """Map a hook payload from Claude Code or Codex to an Event.
 
-    PostToolUse is only a trigger: whatever the tool was (Write, Edit, Bash...),
-    the tracker decides from the memory files themselves whether anything changed.
+    The Codex hook command tags its payload with "stickshaker_source": "codex".
+    PostToolUse is only a trigger (Claude only): whatever the tool was, the
+    tracker decides from the memory files themselves whether anything changed.
     """
     name = payload.get("hook_event_name")
+    source = payload.get("stickshaker_source", "claude")
     transcript = payload.get("transcript_path", "")
 
-    if name == "PostToolUse":
+    if name == "PostToolUse" and source == "claude":
         tool_input = payload.get("tool_input") or {}
         paths = tracker.candidates(transcript, tool_input.get("file_path", ""))
         data = tracker.changes(paths)
-        return Event("memory", data, len(data), "claude") if data else None
+        return Event("memory", data, len(data), source) if data else None
 
     if name == "PreCompact":
         tail = read_tail(transcript, TAIL_BYTES)
-        return Event("save", tail[0], tail[1], "claude") if tail and tail[0] else None
+        if tail and tail[0]:
+            return Event("save", tail[0], tail[1], source)
+        # Codex documents transcript_path as unstable; fall back to the payload.
+        data = json.dumps(payload).encode()
+        return Event("save", data, len(data), source)
 
     if name == "PostCompact":
-        # Documented PostCompact input: `compact_summary` holds the new summary.
+        # Claude's PostCompact has `compact_summary`; Codex's does not.
         summary = payload.get("compact_summary")
         if isinstance(summary, str) and summary:
             data = summary.encode()
-            return Event("load", data, len(data), "claude")
+            return Event("load", data, len(data), source)
         tail = read_tail(transcript, TAIL_BYTES)
-        return Event("load", tail[0], len(tail[0]), "claude") if tail and tail[0] else None
+        data = tail[0] if tail and tail[0] else json.dumps(payload).encode()
+        return Event("load", data, len(data), source)
 
     return None

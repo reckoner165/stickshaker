@@ -36,9 +36,10 @@ Hooks must not make Claude slow. Thus the hook does no work. The daemon does all
 | `stickshaker/synth.py` | Changes bytes into audio samples. Pure functions. No I/O. |
 | `stickshaker/events.py` | Changes a hook payload into an `Event`, or into `None` (no sound). |
 | `stickshaker/memory.py` | Finds memory writes. Compares a small set of files to their last state. |
+| `stickshaker/codex.py` | Watches `~/.codex/memories/` for Codex memory writes. |
 | `stickshaker/player.py` | Plays events in sequence on one worker thread. |
 | `stickshaker/server.py` | Receives hook JSON on a Unix socket. |
-| `stickshaker/install.py` | Adds and removes stickshaker hooks in Claude Code `settings.json`. |
+| `stickshaker/install.py` | Adds and removes stickshaker hooks in Claude Code `settings.json` and Codex `hooks.json`. |
 | `stickshaker/doctor.py` | Checks the daemon, the socket, and the hooks. |
 | `stickshaker/cli.py` | The `stickshaker` command. |
 | `scripts/demo.py` | Plays or saves sounds for files. Does not use the daemon. |
@@ -96,7 +97,7 @@ Event(kind, data, size, source, received)
 | `kind` | `"save"`, `"load"`, or `"memory"`. |
 | `data` | The bytes that the synth encodes. |
 | `size` | The logical size of the event. It sets the duration of the sound. |
-| `source` | `"claude"`. Later also `"codex"`. |
+| `source` | `"claude"` or `"codex"`. |
 | `received` | Monotonic time when the event arrived. Used for timing logs only. |
 
 Mapping from hook payload to `Event`:
@@ -155,6 +156,52 @@ One check costs approximately 70 µs for a folder with 15 files. The `nc` proces
 ### Known limit
 
 The daemon does not find a Bash edit to a `CLAUDE.md` or `AGENTS.md` in a repository. The daemon would have to search the file system to find these edits. This is not permitted by design.
+
+## Codex
+
+stickshaker tracks two things in Codex: compaction and memory writes. It does not examine `AGENTS.md` files.
+
+Sources:
+
+- Hooks: https://learn.chatgpt.com/docs/hooks
+- Memories: https://learn.chatgpt.com/docs/customization/memories.md
+
+### Compaction
+
+`stickshaker install-hooks --codex` adds `PreCompact` and `PostCompact` to `~/.codex/hooks.json`. The format is the same as Claude Code: event, matcher group, handlers.
+
+The Codex hook command adds a tag to the payload before it sends it:
+
+```
+sed '1s/^{/{"stickshaker_source":"codex",/' | nc -U ~/.stickshaker.sock || true
+```
+
+The daemon uses the tag to identify Codex events. The daemon does not use `transcript_path` for this, because the Codex docs say that `transcript_path` "isn't a stable interface for hooks and may change over time".
+
+| Hook | Sound | `data` |
+|---|---|---|
+| `PreCompact` | `save` | The last 32 KB of the transcript. If the daemon cannot read the transcript, the hook payload. |
+| `PostCompact` | `load` | The same as `PreCompact`. Codex `PostCompact` has no summary field. |
+
+Codex runs a new hook only after you trust it. Open the Codex CLI and run `/hooks`.
+
+### Memory writes
+
+Codex writes memories in a background job after a chat is idle. No tool call occurs, so no hook starts. For this reason, the daemon watches one folder: `~/.codex/memories/`.
+
+- The watcher uses FSEvents. It does not poll.
+- It watches only `~/.codex/memories/` and its subfolders.
+- It waits 1 second after the last change (`DEBOUNCE_SECS`). Then it makes one `memory` event for all changes. It uses the same `MemoryTracker` comparison as Claude Code memory.
+- Codex memories are off by default. If the folder does not exist, the watcher does not start. The daemon tries again when a Codex hook arrives.
+
+### Not verified
+
+There is no Codex installation to test on. These items come from the docs only:
+
+- Hooks in the Codex desktop app. The docs describe hooks for the CLI.
+- The exit-code behavior of Codex compaction hooks in debug mode. The docs do not describe it.
+- The file names and formats in `~/.codex/memories/`. The docs do not list them. The watcher reads all files in the folder.
+- The payload starts with `{` on its first line. If it does not, the tag is not added, and the daemon treats the event as a Claude Code event. Compaction still makes a sound.
 
 ## Sound
 
@@ -270,8 +317,9 @@ The event line shows the outcome: `queued`, `dropped: disabled`, or `dropped: qu
 `stickshaker doctor` does these checks:
 
 1. Is the socket available?
-2. Does the daemon answer? It sends a test memory event and measures the round trip.
-3. Are the three hooks installed? Which mode does each hook use?
+2. Does the daemon answer? It sends a test `PostCompact` event with a summary and measures the round trip. This event always makes a sound.
+3. Are the three Claude Code hooks installed? Which mode does each hook use?
+4. Codex (optional, never an error if absent): are the two Codex hooks installed? Does `~/.codex/memories/` exist?
 
 ### Hook timing in Claude Code
 
@@ -279,7 +327,7 @@ The event line shows the outcome: `queued`, `dropped: disabled`, or `dropped: qu
 
 ## Installer
 
-`install.py` merges stickshaker hooks into `settings.json`. It does not replace the file.
+`install.py` merges stickshaker hooks into `~/.claude/settings.json`, or into `~/.codex/hooks.json` with `--codex`. It does not replace the file.
 
 - It identifies stickshaker entries by the text `.stickshaker.sock` in the command.
 - It removes old stickshaker entries before it adds new entries. Thus it is safe to run it again or to change the mode.
@@ -295,8 +343,8 @@ The event line shows the outcome: `queued`, `dropped: disabled`, or `dropped: qu
 | Command | Function |
 |---|---|
 | `uv run stickshaker run [-v]` | Start the daemon. |
-| `uv run stickshaker install-hooks [--debug]` | Install the hooks. |
-| `uv run stickshaker uninstall-hooks` | Remove the hooks. |
+| `uv run stickshaker install-hooks [--codex] [--debug]` | Install the hooks for Claude Code, or for Codex. |
+| `uv run stickshaker uninstall-hooks [--codex]` | Remove the hooks. |
 | `uv run stickshaker doctor` | Check the daemon and the hooks. |
 | `uv run scripts/demo.py FILE --kind KIND [--rate HZ] [--bits N] [--wav OUT]` | Play or save a sound for a file. |
 | `uv run pytest` | Run the tests. |
@@ -312,6 +360,7 @@ Hooks load when a Claude Code session starts. After you install or change the ho
 | `tests/test_daemon.py` | Real socket round trip, socket permissions, one daemon only, old socket, queue drops. |
 | `tests/test_install.py` | Merge, idempotence, mode change, uninstall, backup. |
 | `tests/test_synth.py` | Plan decisions: voices, content pitch, durations, truncation, newline pauses. |
+| `tests/test_codex.py` | Codex payloads as documented, the `sed` tag, Codex install, and the memories watcher with real FSEvents. |
 
 The tests make no sound. They replace `render` and `play` with fakes.
 
@@ -323,6 +372,6 @@ Unix socket paths on macOS have a limit of approximately 104 bytes. The tests ma
 |---|---|
 | Output device change | PortAudio can continue to use the old output device after you change the device. Not examined. |
 | Spectrum notches | The reference spectrum has dips at approximately 4.35 kHz and 9 kHz. Add them to `tone()` later. |
-| Codex support | Stage 4. Codex keeps memory in `~/.codex/memories_1.sqlite` and session logs in `~/.codex/sessions/`. Use the same snapshot method. |
+| Codex: not tested with a real Codex | All Codex behavior comes from the Codex docs. See "Not verified" in the Codex section. |
 | Menu bar | Stage 5. Icon with Enable/Disable. Uses `Player.enabled`. Save the state in `~/.config/stickshaker/state.json`. |
 | Start at login | Later. Use a launchd agent. |
