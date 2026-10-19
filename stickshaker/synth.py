@@ -37,6 +37,10 @@ GRAIN_DENSITY = 0.3  # fraction of grains that are on
 CRACKLE_PER_SEC = 25  # sparse clicks
 DROPOUT = 0.5  # max depth of slow random gain dips
 
+# Output tone curve, matched to a spectrum of real Spectrum tape audio: little
+# below 100 Hz, rising to flat just under 1 kHz. 2nd-order highpass magnitude.
+HIGHPASS_HZ = 700
+
 # Fraction of the total duration given to the pilot tone, per event kind.
 PILOT_FRACTION: dict[str, float] = {"save": 0.30, "load": 0.20, "memory": 0.10}
 
@@ -138,13 +142,22 @@ def grit(wave: np.ndarray, level: np.ndarray, rate: int) -> np.ndarray:
     return out
 
 
+def tone(x: np.ndarray) -> np.ndarray:
+    """Zero-phase FFT EQ: apply the output tone curve to the whole signal."""
+    n = x.size + SR // 10  # zero pad so the circular FFT doesn't wrap the tail
+    f = np.fft.rfftfreq(n, 1 / SR)
+    r = (f / HIGHPASS_HZ) ** 2
+    gain = r / np.sqrt(1 + r**2)
+    return np.fft.irfft(np.fft.rfft(x, n) * gain, n)[: x.size]
+
+
 def crush(wave: np.ndarray, level: np.ndarray, rate: int, bits: int) -> np.ndarray:
     """Tape grit + lowpass, quantize to `bits`, zero-order-hold up to SR, fade ends."""
     out = grit(wave, level, rate)
     levels = 2 ** (bits - 1)
     out = np.clip(np.round(out * levels), -levels, levels - 1) / levels
     # Sample-and-hold upsample, no interpolation filter: keeps the aliasing images.
-    held = out[(np.arange(int(out.size * SR / rate)) * rate // SR)] * AMP
+    held = tone(out[(np.arange(int(out.size * SR / rate)) * rate // SR)]) * AMP
     fade = min(int(0.005 * SR), held.size // 2)
     if fade:
         ramp = np.linspace(0, 1, fade)
