@@ -1,6 +1,6 @@
 # stickshaker architecture
 
-stickshaker plays a tape-loading sound when a coding agent writes memory or compacts its context. The sound is a ZX Spectrum tape signal. The synth makes the signal from the bytes of the event, so different data makes a different sound.
+stickshaker plays a tape-loading sound when a coding agent writes memory or compacts its context. It supports Claude Code and Codex. The sound is a ZX Spectrum tape signal. The synth makes the signal from the bytes of the event, so different data makes a different sound.
 
 This document describes the components, the data flow, and the contracts between the components.
 
@@ -13,21 +13,23 @@ This document describes the components, the data flow, and the contracts between
 │ PostCompact     │  Unix socket │     │                                        │
 │ PostToolUse     │  nc -U       │     ▼                                        │
 └─────────────────┘              │ events.py   payload ──▶ Event or None        │
-                                 │     │        (memory.py checks memory files) │
-                                 │     ▼                                        │
-                                 │ player.py   queue (max 2) ──▶ worker thread  │
-                                 │                                │             │
-                                 │                                ▼             │
+ Codex                           │     │        (memory.py checks memory files) │
+┌─────────────────┐  hook JSON,  │     │                                        │
+│ PreCompact      │─────────────▶│     │                                        │
+│ PostCompact     │  tagged      │     ▼                                        │
+└─────────────────┘              │ player.py   queue (max 2) ──▶ worker thread  │
+ ~/.codex/memories/   FSEvents   │     ▲                          │             │
+  (background job) ─────────────▶│ codex.py    folder watcher     ▼             │
                                  │ synth.py    bytes ──▶ float32 samples        │──▶ audio out
                                  └──────────────────────────────────────────────┘
 ```
 
 The design has two parts:
 
-- **Hooks** in Claude Code. A hook is a short shell command. It sends the hook JSON to the daemon and stops immediately.
-- **The daemon.** This is one long-running process. It filters events, makes the sounds, and plays them.
+- **Hooks** in Claude Code and Codex. A hook is a short shell command. It sends the hook JSON to the daemon and stops immediately.
+- **The daemon.** This is one long-running process. It filters events, makes the sounds, and plays them. It also watches `~/.codex/memories/`, because Codex writes memories without a hook (see "Codex").
 
-Hooks must not make Claude slow. Thus the hook does no work. The daemon does all the work on its own threads.
+Hooks must not make the agent slow. Thus the hook does no work. The daemon does all the work on its own threads.
 
 ## Components
 
@@ -46,28 +48,30 @@ Hooks must not make Claude slow. Thus the hook does no work. The daemon does all
 
 ## Data flow
 
-1. Claude Code starts a hook. The hook command is `nc -U ~/.stickshaker.sock || true`.
+1. Claude Code or Codex starts a hook. The hook command is `nc -U ~/.stickshaker.sock || true`. For Codex, `sed` first adds `"stickshaker_source":"codex"` to the payload.
 2. `nc` connects to the socket and sends the hook JSON.
 3. `server.py` reads one complete JSON object. Then it closes the connection. `nc` stops.
 4. `events.py` changes the payload into an `Event`. If no sound is necessary, it returns `None`.
 5. `player.py` puts the `Event` in the queue. If the queue is full, the player drops the event.
 6. The worker thread gets the `Event`. It calls `synth.render()` and plays the samples.
 
-Steps 1 to 5 take approximately 2 ms. Step 6 occurs on the worker thread. Claude does not wait for step 6.
+Steps 1 to 5 take approximately 2 ms. Step 6 occurs on the worker thread. The agent does not wait for step 6.
+
+Codex memory writes do not use steps 1 to 4. `codex.py` makes the `Event` and gives it to the player (step 5).
 
 ## Contracts
 
 ### Hook to daemon (IPC)
 
 - Transport: Unix domain socket at `~/.stickshaker.sock`. File permissions are `0600`. Only the owner can connect.
-- Protocol: one connection carries one JSON object. The JSON object is the hook payload from Claude Code, without changes. The daemon does not send a reply.
+- Protocol: one connection carries one JSON object. The JSON object is the hook payload from the agent. Claude Code payloads arrive without changes. Codex payloads have one added key, `stickshaker_source` (see "Codex"). The daemon does not send a reply.
 - The server closes the connection after it reads one object. This is necessary because macOS `nc` keeps the connection open until the other side closes it.
 - The server stops a read after 2 seconds or after 8 MB.
 - The messages are "fire and forget". If a message is lost, one sound does not play. Nothing else occurs.
 
 ### Hooks
 
-`stickshaker install-hooks` adds these hooks to `~/.claude/settings.json`:
+For the Codex hooks, see "Codex". `stickshaker install-hooks` adds these hooks to `~/.claude/settings.json`:
 
 | Hook event | Matcher | Sound |
 |---|---|---|
@@ -325,8 +329,9 @@ The event line shows the outcome: `queued`, `dropped: disabled`, or `dropped: qu
 
 1. Is the socket available?
 2. Does the daemon answer? It sends a test `PostCompact` event with a summary and measures the round trip. This event always makes a sound.
-3. Are the three Claude Code hooks installed? Which mode does each hook use?
-4. Codex (optional, never an error if absent): are the two Codex hooks installed? Does `~/.codex/memories/` exist?
+3. For each agent (Claude Code, Codex): are its hooks installed? Which mode does each hook use? Each agent is optional. If an agent has some stickshaker hooks, all its hooks must be there.
+4. Is at least one agent set up? If no agent has stickshaker hooks, this is an error.
+5. Does `~/.codex/memories/` exist? This is information only.
 
 ### Hook timing in Claude Code
 
@@ -356,7 +361,7 @@ The event line shows the outcome: `queued`, `dropped: disabled`, or `dropped: qu
 | `uv run scripts/demo.py FILE --kind KIND [--rate HZ] [--bits N] [--wav OUT]` | Play or save a sound for a file. |
 | `uv run pytest` | Run the tests. |
 
-Hooks load when a Claude Code session starts. After you install or change the hooks, start a new session.
+Hooks load when an agent session starts. After you install or change the hooks, start a new session.
 
 ## Tests
 
@@ -367,6 +372,7 @@ Hooks load when a Claude Code session starts. After you install or change the ho
 | `tests/test_daemon.py` | Real socket round trip, socket permissions, one daemon only, old socket, queue drops. |
 | `tests/test_install.py` | Merge, idempotence, mode change, uninstall, backup. |
 | `tests/test_synth.py` | Plan decisions: voices, content pitch, durations, truncation, newline pauses. |
+| `tests/test_doctor.py` | Each agent optional, at least one required, partial installs reported. |
 | `tests/test_codex.py` | Codex payloads as documented, the `sed` tag, Codex install, and the memories watcher with real FSEvents. |
 
 The tests make no sound. They replace `render` and `play` with fakes.

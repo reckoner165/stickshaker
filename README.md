@@ -2,7 +2,7 @@
 
 # stickshaker
 
-stickshaker plays a ZX Spectrum tape sound when Claude Code writes memory or compacts its context. The synth makes the sound from the bytes of the event, so different data makes a different sound.
+stickshaker plays a ZX Spectrum tape sound when Claude Code or Codex writes memory or compacts its context. The synth makes the sound from the bytes of the event, so different data makes a different sound.
 
 stickshaker reads files only in `~/.claude` and `~/.codex`. It does not read files in other directories on your computer.
 
@@ -12,7 +12,15 @@ For the design, see [ARCHITECTURE.md](ARCHITECTURE.md).
 
 - macOS
 - [uv](https://docs.astral.sh/uv/)
-- Claude Code
+
+## Supported agents
+
+Set up stickshaker for one agent or for both. Each agent is optional.
+
+| Agent | Sounds | Status |
+|---|---|---|
+| Claude Code | Compaction, memory writes | Tested |
+| Codex | Compaction, memory writes | Based on the Codex docs only. Not tested with a real Codex. |
 
 ## Set up
 
@@ -29,13 +37,21 @@ For the design, see [ARCHITECTURE.md](ARCHITECTURE.md).
    uv sync
    ```
 
-3. Install the hooks in `~/.claude/settings.json`:
+3. Install the hooks for each agent that you use. The installer does not change other hooks or settings. It makes a backup of the file before it writes.
+
+   **Claude Code** (`~/.claude/settings.json`):
 
    ```sh
    uv run stickshaker install-hooks
    ```
 
-   The installer adds 3 hooks. It does not change other hooks or settings. It makes a backup at `~/.claude/settings.json.stickshaker-bak`.
+   **Codex** (`~/.codex/hooks.json`):
+
+   ```sh
+   uv run stickshaker install-hooks --codex
+   ```
+
+   Then open the Codex CLI and run `/hooks`. Trust the stickshaker hooks. Codex does not run a new hook before you trust it. For sounds on Codex memory writes, turn on Codex memories: in the Codex app, go to **Settings > Personalization**.
 
 ## Run
 
@@ -51,40 +67,26 @@ For the design, see [ARCHITECTURE.md](ARCHITECTURE.md).
    uv run stickshaker doctor
    ```
 
-   All lines must show `ok`. You hear one short test sound.
+   You hear one short test sound. The hook lines for each agent that you set up must show `ok`.
 
-3. Start a new Claude Code session. Hooks load only when a session starts.
+3. Start a new agent session. Hooks load only when a session starts.
 
-4. Do one of these:
-   - Tell Claude to save something to memory. You hear a short `memory` sound.
-   - Type `/compact`. You hear a `save` sound, then a `load` sound.
+4. Try it:
+   - Claude Code: tell Claude to save something to memory, or type `/compact`.
+   - Codex: type `/compact`.
 
-The daemon log shows each event and each sound.
-
-### Codex (optional)
-
-stickshaker also plays sounds for Codex compaction and Codex memory writes. This support is based on the Codex docs only. It is not tested with a real Codex.
-
-1. Install the Codex hooks in `~/.codex/hooks.json`:
-
-   ```sh
-   uv run stickshaker install-hooks --codex
-   ```
-
-2. Open the Codex CLI and run `/hooks`. Trust the stickshaker hooks. Codex does not run a new hook before you trust it.
-3. To get sounds for Codex memory writes, turn on Codex memories. In the Codex app, go to **Settings > Personalization**. The daemon watches `~/.codex/memories/`.
-
-To remove the Codex hooks, run `uv run stickshaker uninstall-hooks --codex`.
+   A memory write plays a short `memory` sound. A compaction plays a `save` sound, then a `load` sound. The daemon log shows each event and each sound.
 
 ### Debug mode
 
-In debug mode, a daemon that is not available shows as a hook error in Claude Code. Claude does not stop.
+In debug mode, a daemon that is not available shows as a hook error in the agent. The agent does not stop.
 
 ```sh
-uv run stickshaker install-hooks --debug
+uv run stickshaker install-hooks --debug           # Claude Code
+uv run stickshaker install-hooks --codex --debug   # Codex
 ```
 
-To go back to silent mode, run `uv run stickshaker install-hooks` again.
+To go back to silent mode, install the hooks again without `--debug`.
 
 ### Stop and remove
 
@@ -92,10 +94,11 @@ To go back to silent mode, run `uv run stickshaker install-hooks` again.
 2. To remove the hooks:
 
    ```sh
-   uv run stickshaker uninstall-hooks
+   uv run stickshaker uninstall-hooks           # Claude Code
+   uv run stickshaker uninstall-hooks --codex   # Codex
    ```
 
-If the hooks stay installed and the daemon does not run, Claude Code operates normally. You hear no sounds.
+If the hooks stay installed and the daemon does not run, the agents operate normally. You hear no sounds.
 
 ## Test
 
@@ -105,7 +108,7 @@ Run the tests:
 uv run pytest
 ```
 
-The tests make no sound and do not change your Claude Code settings.
+The tests make no sound and do not change your agent settings.
 
 To listen to the sound for a file without the daemon:
 
@@ -121,8 +124,9 @@ The values for `--kind` are `save`, `load`, and `memory`. To write a WAV file in
 |---|---|
 | `doctor` shows `no socket` | Start the daemon with `uv run stickshaker run`. |
 | `another stickshaker is listening` | A daemon is already running. Use it, or stop it first. |
-| No sound in a Claude session | Start a new session. Then run `uv run stickshaker doctor`. |
-| No sound for a memory write | Make sure the file is in `~/.claude/projects/<project>/memory/`. See "Memory detection" in [ARCHITECTURE.md](ARCHITECTURE.md). |
+| No sound in an agent session | Start a new session. Then run `uv run stickshaker doctor`. |
+| No sound for a Claude Code memory write | Make sure the file is in `~/.claude/projects/<project>/memory/`. See "Memory detection" in [ARCHITECTURE.md](ARCHITECTURE.md). |
+| No sound for a Codex memory write | Make sure Codex memories are on. Codex writes memories some time after a chat becomes idle. |
 
 ## Credits
 

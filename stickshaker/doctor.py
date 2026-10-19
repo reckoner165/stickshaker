@@ -54,34 +54,32 @@ def run(
         except OSError as e:
             report(False, f"socket exists but daemon didn't answer: {e}")
 
-    try:
-        found = install.installed_hooks(install.load(settings_path))
-    except json.JSONDecodeError as e:
-        report(False, f"{settings_path} isn't valid JSON: {e}")
-        return 1
-    for event, _ in install.HOOKS:
-        cmd = found.get(event)
-        if cmd is None:
-            report(False, f"{event} hook missing (run `stickshaker install-hooks`)")
-        else:
-            mode = "silent" if cmd == install.hook_command(debug=False) else "debug"
-            report(True, f"{event} hook installed ({mode})")
+    # Each agent is optional. An agent counts as set up if any of our hooks is
+    # in its file; then all of its hooks must be there. At least one agent must be set up.
+    agents = [(install.CLAUDE, settings_path, "Claude Code", ""), (install.CODEX, codex_path, "Codex", " --codex")]
+    set_up = 0
+    for target, path, label, flag in agents:
+        try:
+            found = install.installed_hooks(install.load(path))
+        except json.JSONDecodeError as e:
+            report(False, f"{path} isn't valid JSON: {e}")
+            continue
+        if not found:
+            info(f"{label} hooks not installed (optional: `stickshaker install-hooks{flag}`)")
+            continue
+        set_up += 1
+        for event, _ in target.hooks:
+            cmd = found.get(event)
+            if cmd is None:
+                report(False, f"{label} {event} hook missing (run `stickshaker install-hooks{flag}`)")
+            else:
+                mode = "silent" if cmd == install.hook_command(debug=False, target=target) else "debug"
+                report(True, f"{label} {event} hook installed ({mode})")
+        if target is install.CODEX:
+            info("Codex runs the hooks only after you trust them via /hooks in Codex")
+    if set_up == 0:
+        report(False, "no agent hooks installed: run `stickshaker install-hooks` and/or `stickshaker install-hooks --codex`")
 
-    # Codex is optional: report what's there, never fail on it being absent.
-    try:
-        codex_found = install.installed_hooks(install.load(codex_path))
-    except json.JSONDecodeError as e:
-        report(False, f"{codex_path} isn't valid JSON: {e}")
-        codex_found = {}
-    if not codex_found:
-        info("Codex hooks not installed (optional: `stickshaker install-hooks --codex`)")
-    for event, _ in install.CODEX.hooks if codex_found else []:
-        cmd = codex_found.get(event)
-        if cmd is None:
-            report(False, f"Codex {event} hook missing (run `stickshaker install-hooks --codex`)")
-        else:
-            mode = "silent" if cmd == install.hook_command(debug=False, target=install.CODEX) else "debug"
-            report(True, f"Codex {event} hook installed ({mode}); trust it via /hooks in Codex")
     if codex_memories.is_dir():
         info(f"Codex memories folder found at {codex_memories}; the daemon watches it")
     else:
