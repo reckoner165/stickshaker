@@ -10,10 +10,12 @@ import logging
 import os
 import socket
 import socketserver
+import time
 from pathlib import Path
 from typing import Any
 
 from stickshaker.events import from_hook
+from stickshaker.memory import MemoryTracker
 from stickshaker.player import Player
 
 log = logging.getLogger(__name__)
@@ -71,23 +73,31 @@ class _Handler(socketserver.BaseRequestHandler):
     server: "HookServer"
 
     def handle(self) -> None:
+        start = time.monotonic()
         payload = read_one_json(self.request)
         if payload is None:
+            log.debug("connection without a JSON object")
             return
         name = payload.get("hook_event_name")
-        event = from_hook(payload)
+        event = from_hook(payload, self.server.tracker)
+        ms = (time.monotonic() - start) * 1000
         if event is None:
-            log.debug("ignored %s %s", name, payload.get("tool_name", ""))
+            log.debug("ignored %s %s (%.1f ms)", name, payload.get("tool_name", ""), ms)
             return
-        queued = self.server.player.submit(event)
-        log.info("%s %s (%d bytes) %s", name, event.kind, event.size, "queued" if queued else "dropped")
+        player = self.server.player
+        if player.submit(event):
+            outcome = "queued"
+        else:
+            outcome = "dropped: disabled" if not player.enabled else "dropped: queue full"
+        log.info("%s -> %s, %d bytes, %s (%.1f ms)", name, event.kind, event.size, outcome, ms)
 
 
 class HookServer(socketserver.ThreadingUnixStreamServer):
     daemon_threads = True
 
-    def __init__(self, player: Player, path: Path = SOCKET_PATH):
+    def __init__(self, player: Player, path: Path = SOCKET_PATH, tracker: MemoryTracker | None = None):
         self.player = player
+        self.tracker = tracker or MemoryTracker()
         self.path = Path(path)
         claim_socket(self.path)
         super().__init__(str(self.path), _Handler)

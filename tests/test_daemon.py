@@ -8,14 +8,9 @@ from pathlib import Path
 import pytest
 
 from stickshaker.events import Event
+from stickshaker.memory import MemoryTracker
 from stickshaker.player import Player
 from stickshaker.server import AlreadyRunning, HookServer
-
-MEM_WRITE = {
-    "hook_event_name": "PostToolUse",
-    "tool_name": "Write",
-    "tool_input": {"file_path": "/x/memory/a.md", "content": "hi"},
-}
 
 
 class FakeAudio:
@@ -46,10 +41,30 @@ def sock_path():
 
 
 @pytest.fixture
-def daemon(sock_path):
+def home(sock_path):
+    """Fake ~/.claude next to the socket: one project with a memory folder."""
+    project = sock_path.parent / "projects" / "p"
+    (project / "memory").mkdir(parents=True)
+    return sock_path.parent
+
+
+def mem_write(home, name="a.md", content="hi"):
+    """Write a memory file, and the PostToolUse payload Claude Code would send."""
+    path = home / "projects" / "p" / "memory" / name
+    path.write_text(content)
+    return {
+        "hook_event_name": "PostToolUse",
+        "tool_name": "Write",
+        "transcript_path": str(home / "projects" / "p" / "s.jsonl"),
+        "tool_input": {"file_path": str(path), "content": content},
+    }
+
+
+@pytest.fixture
+def daemon(sock_path, home):
     audio = FakeAudio()
     player = Player(render=audio.render, play=audio.play)
-    server = HookServer(player, sock_path)
+    server = HookServer(player, sock_path, MemoryTracker(home))
     t = threading.Thread(target=server.serve_forever, daemon=True)
     t.start()
     yield audio, player, server
@@ -67,18 +82,18 @@ def send(path: Path, payload: dict) -> bytes:
         return s.recv(1)  # b"" once the server closes its end
 
 
-def test_memory_event_plays(daemon, sock_path):
+def test_memory_event_plays(daemon, sock_path, home):
     audio, _, _ = daemon
-    assert send(sock_path, MEM_WRITE) == b""  # server closed without nc half-closing
+    assert send(sock_path, mem_write(home)) == b""  # server closed without nc half-closing
     assert audio.done.acquire(timeout=3)
     assert audio.played == [(b"hi", 2, "memory")]
 
 
-def test_ignored_event_is_silent(daemon, sock_path):
+def test_ignored_event_is_silent(daemon, sock_path, home):
     audio, _, _ = daemon
-    payload = {**MEM_WRITE, "tool_input": {"file_path": "/repo/main.py", "content": "x"}}
+    payload = {"hook_event_name": "PostToolUse", "tool_name": "Bash", "tool_input": {"command": "ls"}}
     send(sock_path, payload)
-    send(sock_path, MEM_WRITE)
+    send(sock_path, mem_write(home))
     assert audio.done.acquire(timeout=3)
     assert audio.played == [(b"hi", 2, "memory")]
 

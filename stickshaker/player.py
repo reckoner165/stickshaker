@@ -7,6 +7,7 @@ rather than piling up into a long backlog; extras are dropped.
 import logging
 import queue
 import threading
+import time
 from collections.abc import Callable
 
 import numpy as np
@@ -58,6 +59,14 @@ class Player:
             if not self.enabled:
                 continue
             try:
-                self._play(self._render(event.data, event.size, event.kind))
+                t0 = time.monotonic()
+                samples = self._render(event.data, event.size, event.kind)
+                t1 = time.monotonic()
+                self._play(samples)
+                t2 = time.monotonic()
+                log.info(
+                    "played %s: waited %.0f ms, render %.0f ms, play %.0f ms",
+                    event.kind, (t0 - event.received) * 1000, (t1 - t0) * 1000, (t2 - t1) * 1000,
+                )
             except Exception:
                 log.exception("failed to play %s event", event.kind)
