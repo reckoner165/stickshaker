@@ -1,4 +1,4 @@
-"""stickshaker command line: daemon, hook install/uninstall, and doctor."""
+"""stickshaker command line: setup, daemon control, hook install/uninstall, and doctor."""
 
 import argparse
 import json
@@ -8,7 +8,7 @@ import sys
 import threading
 from pathlib import Path
 
-from stickshaker import doctor, install, state
+from stickshaker import daemon, doctor, install, state
 from stickshaker.codex import CodexMemoryWatcher
 from stickshaker.player import Player
 from stickshaker.server import SOCKET_PATH, AlreadyRunning, HookServer
@@ -83,10 +83,32 @@ def uninstall_hooks(settings_path: Path) -> int:
     return 0
 
 
+def setup(targets: list[install.Target], debug: bool) -> int:
+    """Install hooks for the chosen agents, or for each agent whose folder exists."""
+    if not targets:
+        targets = [t for t in install.TARGETS.values() if t.settings_path.parent.is_dir()]
+        if not targets:
+            print("found neither ~/.claude nor ~/.codex: install Claude Code or Codex first")
+            return 1
+    for target in targets:
+        if install_hooks(target, target.settings_path, debug):
+            return 1
+    print("next: `stickshaker start`, then start a new agent session")
+    return 0
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(prog="stickshaker")
     sub = ap.add_subparsers(dest="command", required=True)
-    run_p = sub.add_parser("run", help="run the daemon with a menu bar icon")
+    setup_p = sub.add_parser("setup", help="install hooks for Claude Code and Codex (each one found)")
+    setup_p.add_argument("--claude", action="store_true", help="only Claude Code")
+    setup_p.add_argument("--codex", action="store_true", help="only Codex")
+    setup_p.add_argument("--debug", action="store_true", help="let socket failures show as hook errors")
+    start_p = sub.add_parser("start", help="run the daemon in the background")
+    start_p.add_argument("-v", "--verbose", action="store_true", help="also log ignored events")
+    sub.add_parser("stop", help="stop the background daemon")
+    sub.add_parser("status", help="show whether the daemon is running")
+    run_p = sub.add_parser("run", help="run the daemon in this terminal, with a menu bar icon")
     run_p.add_argument("-v", "--verbose", action="store_true", help="also log ignored events")
     run_p.add_argument("--headless", action="store_true", help="no menu bar icon")
     inst = sub.add_parser("install-hooks", help="add hooks to Claude Code (or Codex) settings")
@@ -97,6 +119,15 @@ def main() -> None:
         p.add_argument("--settings", type=Path, help="settings file (default: the agent's own)")
     sub.add_parser("doctor", help="check daemon, socket round trip and hooks")
     args = ap.parse_args()
+    if args.command == "setup":
+        chosen = [t for t, on in ((install.CLAUDE, args.claude), (install.CODEX, args.codex)) if on]
+        sys.exit(setup(chosen, args.debug))
+    if args.command == "start":
+        sys.exit(daemon.start(args.verbose))
+    if args.command == "stop":
+        sys.exit(daemon.stop())
+    if args.command == "status":
+        sys.exit(daemon.status())
     if args.command == "run":
         sys.exit(run(args.verbose, args.headless))
     if args.command in ("install-hooks", "uninstall-hooks"):

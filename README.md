@@ -37,33 +37,29 @@ Set up stickshaker for one agent or for both. Each agent is optional.
    uv sync
    ```
 
-3. Install the hooks for each agent that you use. The installer does not change other hooks or settings. It makes a backup of the file before it writes.
-
-   **Claude Code** (`~/.claude/settings.json`):
+3. Install the hooks:
 
    ```sh
-   uv run stickshaker install-hooks
+   uv run stickshaker setup
    ```
 
-   **Codex** (`~/.codex/hooks.json`):
+   `setup` installs the hooks for each agent that has a folder on your computer: Claude Code (`~/.claude/settings.json`) and Codex (`~/.codex/hooks.json`). To install for one agent only, add `--claude` or `--codex`. The installer does not change other hooks or settings. It makes a backup of the file before it writes.
 
-   ```sh
-   uv run stickshaker install-hooks --codex
-   ```
-
-   Then open the Codex CLI and run `/hooks`. Trust the stickshaker hooks. Codex does not run a new hook before you trust it. For sounds on Codex memory writes, turn on Codex memories: in the Codex app, go to **Settings > Personalization**.
+   **Codex only:** open the Codex CLI and run `/hooks`. Trust the stickshaker hooks. Codex does not run a new hook before you trust it. For sounds on Codex memory writes, turn on Codex memories: in the Codex app, go to **Settings > Personalization**.
 
 ## Run
 
-1. Start the daemon. Keep this terminal open:
+1. Start the daemon in the background:
 
    ```sh
-   uv run stickshaker run -v
+   uv run stickshaker start
    ```
 
-   The yoke icon appears in the menu bar. Click it to turn the sounds on or off, see the last sound, or quit. The on/off setting stays after a restart. To run without the icon, add `--headless`.
+   The yoke icon appears in the menu bar. Click it to turn the sounds on or off, see the last sound, or quit. The on/off setting stays after a restart. You can close the terminal. The daemon continues to run. Its log is in `~/Library/Logs/stickshaker.log`.
 
-2. In a different terminal, check the setup:
+   To see if the daemon runs, use `uv run stickshaker status`.
+
+2. One time, after you install the hooks, check the setup:
 
    ```sh
    uv run stickshaker doctor
@@ -79,20 +75,29 @@ Set up stickshaker for one agent or for both. Each agent is optional.
 
    A memory write plays a short `memory` sound. A compaction plays a `save` sound, then a `load` sound. The daemon log shows each event and each sound.
 
+### Run in a terminal
+
+To see the log in a terminal while you debug, stop the background daemon and then run it in the foreground:
+
+```sh
+uv run stickshaker run -v
+```
+
+To run without the icon, add `--headless`. To stop, push `Ctrl-C`.
+
 ### Debug mode
 
 In debug mode, a daemon that is not available shows as a hook error in the agent. The agent does not stop.
 
 ```sh
-uv run stickshaker install-hooks --debug           # Claude Code
-uv run stickshaker install-hooks --codex --debug   # Codex
+uv run stickshaker setup --debug
 ```
 
-To go back to silent mode, install the hooks again without `--debug`.
+To go back to silent mode, run `setup` again without `--debug`.
 
 ### Stop and remove
 
-1. To stop the daemon, click **Quit stickshaker** in the menu, or push `Ctrl-C` in its terminal.
+1. To stop the daemon, click **Quit stickshaker** in the menu, or run `uv run stickshaker stop`.
 2. To remove the hooks:
 
    ```sh
@@ -124,8 +129,9 @@ The values for `--kind` are `save`, `load`, and `memory`. To write a WAV file in
 
 | Problem | Action |
 |---|---|
-| `doctor` shows `no socket` | Start the daemon with `uv run stickshaker run`. |
-| `another stickshaker is listening` | A daemon is already running. Use it, or stop it first. |
+| `doctor` shows `no socket` | Start the daemon with `uv run stickshaker start`. |
+| `start` shows `daemon exited` | Read the log that `start` shows. It is also in `~/Library/Logs/stickshaker.log`. |
+| `another stickshaker is listening` | A daemon is already running. Use it, or stop it first with `uv run stickshaker stop`. |
 | No sound in an agent session | Start a new session. Then run `uv run stickshaker doctor`. |
 | No sound for a Claude Code memory write | Make sure the file is in `~/.claude/projects/<project>/memory/`. See "Memory detection" in [ARCHITECTURE.md](ARCHITECTURE.md). |
 | No sound for a Codex memory write | Make sure Codex memories are on. Codex writes memories some time after a chat becomes idle. |

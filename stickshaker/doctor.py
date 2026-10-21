@@ -46,7 +46,7 @@ def run(
         print(f"--   {msg}")
 
     if not socket_path.exists():
-        report(False, f"no socket at {socket_path}: is `stickshaker run` going?")
+        report(False, f"no socket at {socket_path}: start the daemon with `stickshaker start`")
     else:
         try:
             ms = round_trip(socket_path, TEST_EVENT) * 1000

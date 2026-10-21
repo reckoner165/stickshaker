@@ -45,6 +45,7 @@ Hooks must not make the agent slow. Thus the hook does no work. The daemon does 
 | `stickshaker/state.py` | Keeps the Enabled/Disabled setting in macOS user defaults. |
 | `stickshaker/install.py` | Adds and removes stickshaker hooks in Claude Code `settings.json` and Codex `hooks.json`. |
 | `stickshaker/doctor.py` | Checks the daemon, the socket, and the hooks. |
+| `stickshaker/daemon.py` | Starts, stops, and finds the background daemon (`start`, `stop`, `status`). |
 | `stickshaker/cli.py` | The `stickshaker` command. |
 | `scripts/demo.py` | Plays or saves sounds for files. Does not use the daemon. |
 
@@ -298,6 +299,19 @@ The output level is `AMP` (0.1). The macOS system volume controls the final leve
 
 ## Daemon life cycle
 
+### Background mode
+
+`stickshaker start` runs `stickshaker run` as a background process, and then returns.
+
+- The process starts in a new session. Thus, when you close the terminal, the daemon continues to run.
+- The output goes to `~/Library/Logs/stickshaker.log`. Each start makes a new log file, so the file stays small.
+- `start` waits a maximum of 5 s for the socket to accept a connection. If the process stops before that, `start` shows the log.
+- If a daemon already answers on the socket, `start` does not start a second daemon.
+
+The socket is the only state. There is no PID file. To find the daemon, `start`, `stop` and `status` connect to the socket. macOS then gives the process ID of the daemon (socket option `LOCAL_PEERPID`). `stop` sends `SIGTERM` to that process, and then waits a maximum of 10 s for the socket file to go away. This is the same clean stop as Quit.
+
+`stickshaker run` stays as the foreground mode, for debugging.
+
 ### Start
 
 1. If `~/.stickshaker.sock` exists, try to connect to it.
@@ -379,7 +393,11 @@ The event line shows the outcome: `queued`, `dropped: disabled`, or `dropped: qu
 
 | Command | Function |
 |---|---|
-| `uv run stickshaker run [-v] [--headless]` | Start the daemon with the menu bar icon, or without it. |
+| `uv run stickshaker setup [--claude] [--codex] [--debug]` | Install the hooks for each agent that has a folder (`~/.claude`, `~/.codex`), or only for the agents that you specify. |
+| `uv run stickshaker start [-v]` | Start the daemon in the background. |
+| `uv run stickshaker stop` | Stop the background daemon. |
+| `uv run stickshaker status` | Show if the daemon runs, its process ID, and the log path. |
+| `uv run stickshaker run [-v] [--headless]` | Start the daemon in this terminal, with the menu bar icon or without it. |
 | `uv run stickshaker install-hooks [--codex] [--debug]` | Install the hooks for Claude Code, or for Codex. |
 | `uv run stickshaker uninstall-hooks [--codex]` | Remove the hooks. |
 | `uv run stickshaker doctor` | Check the daemon and the hooks. |
@@ -398,6 +416,7 @@ Hooks load when an agent session starts. After you install or change the hooks, 
 | `tests/test_install.py` | Merge, idempotence, mode change, uninstall, backup. |
 | `tests/test_synth.py` | Plan decisions: voices, content pitch, durations, truncation, newline pauses. |
 | `tests/test_doctor.py` | Each agent optional, at least one required, partial installs reported. |
+| `tests/test_control.py` | `start`, `stop` and `status` with a fake daemon process, the process ID from the socket, and `setup` agent selection. |
 | `tests/test_state.py` | Enabled/Disabled setting in a temporary defaults domain, and the player's played-event callback. |
 | `tests/test_codex.py` | Codex payloads as documented, the `sed` tag, Codex install, and the memories watcher with real FSEvents. |
 
