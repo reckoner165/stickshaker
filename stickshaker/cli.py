@@ -5,20 +5,22 @@ import json
 import logging
 import signal
 import sys
+import threading
 from pathlib import Path
 
-from stickshaker import doctor, install
+from stickshaker import doctor, install, state
 from stickshaker.codex import CodexMemoryWatcher
 from stickshaker.player import Player
 from stickshaker.server import SOCKET_PATH, AlreadyRunning, HookServer
 
 
-def run(verbose: bool) -> int:
+def run(verbose: bool, headless: bool) -> int:
     logging.basicConfig(
         level=logging.DEBUG if verbose else logging.INFO,
         format="%(asctime)s %(levelname)s %(name)s: %(message)s",
     )
     player = Player()
+    player.enabled = state.get_enabled()
     watcher = CodexMemoryWatcher(player.submit)
     try:
         server = HookServer(player, SOCKET_PATH, codex_watcher=watcher)
@@ -26,11 +28,19 @@ def run(verbose: bool) -> int:
         logging.error("%s", e)
         return 1
     watcher.ensure_started()
-    # SIGTERM (e.g. from launchd) unwinds like Ctrl-C so the socket gets removed.
-    signal.signal(signal.SIGTERM, lambda *_: sys.exit(0))
-    logging.info("listening on %s", SOCKET_PATH)
+    logging.info("listening on %s (sounds %s)", SOCKET_PATH, "enabled" if player.enabled else "disabled")
     try:
-        server.serve_forever()
+        if headless:
+            # SIGTERM (e.g. from launchd) unwinds like Ctrl-C so the socket gets removed.
+            signal.signal(signal.SIGTERM, lambda *_: sys.exit(0))
+            server.serve_forever()
+        else:
+            # Cocoa needs the main thread; the server runs beside it.
+            from stickshaker import menubar
+
+            threading.Thread(target=server.serve_forever, name="server", daemon=True).start()
+            menubar.run(player)  # returns on Quit, Ctrl-C or SIGTERM
+            server.shutdown()
     except KeyboardInterrupt:
         pass
     finally:
@@ -48,6 +58,7 @@ def install_hooks(target: install.Target, settings_path: Path, debug: bool) -> i
         return 1
     install.add_hooks(settings, debug, target)
     backup = install.save(settings_path, settings)
+    state.set_enabled(True)  # a fresh install always starts with sounds on
     mode = "debug (failures show as hook errors)" if debug else "silent"
     print(f"installed {len(target.hooks)} {target.name} hooks in {settings_path}, {mode}")
     if backup:
@@ -75,8 +86,9 @@ def uninstall_hooks(settings_path: Path) -> int:
 def main() -> None:
     ap = argparse.ArgumentParser(prog="stickshaker")
     sub = ap.add_subparsers(dest="command", required=True)
-    run_p = sub.add_parser("run", help="run the daemon (headless)")
+    run_p = sub.add_parser("run", help="run the daemon with a menu bar icon")
     run_p.add_argument("-v", "--verbose", action="store_true", help="also log ignored events")
+    run_p.add_argument("--headless", action="store_true", help="no menu bar icon")
     inst = sub.add_parser("install-hooks", help="add hooks to Claude Code (or Codex) settings")
     inst.add_argument("--debug", action="store_true", help="let socket failures show as hook errors")
     uninst = sub.add_parser("uninstall-hooks", help="remove stickshaker's hooks")
@@ -86,7 +98,7 @@ def main() -> None:
     sub.add_parser("doctor", help="check daemon, socket round trip and hooks")
     args = ap.parse_args()
     if args.command == "run":
-        sys.exit(run(args.verbose))
+        sys.exit(run(args.verbose, args.headless))
     if args.command in ("install-hooks", "uninstall-hooks"):
         target = install.CODEX if args.codex else install.CLAUDE
         path = args.settings or target.settings_path

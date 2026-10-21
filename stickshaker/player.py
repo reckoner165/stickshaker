@@ -22,6 +22,11 @@ MAX_QUEUE = 2
 
 
 def play_blocking(samples: np.ndarray) -> None:
+    # PortAudio reads the device list once, at start. Restart it (~2 ms) so each
+    # sound goes to the current default output, even after a device change.
+    # These are private sounddevice calls; the public API has no refresh.
+    sd._terminate()
+    sd._initialize()
     sd.play(samples, synth.SR)
     sd.wait()
 
@@ -34,6 +39,7 @@ class Player:
         play: Callable[[np.ndarray], None] = play_blocking,
     ):
         self.enabled = True
+        self.on_played: Callable[[Event], None] | None = None  # e.g. the menu bar's last-event line
         self._render = render
         self._play = play
         self._queue: queue.Queue[Event | None] = queue.Queue(max_queue)
@@ -68,5 +74,7 @@ class Player:
                     "played %s: waited %.0f ms, render %.0f ms, play %.0f ms",
                     event.kind, (t0 - event.received) * 1000, (t1 - t0) * 1000, (t2 - t1) * 1000,
                 )
+                if self.on_played:
+                    self.on_played(event)
             except Exception:
                 log.exception("failed to play %s event", event.kind)

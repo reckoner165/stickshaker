@@ -61,6 +61,8 @@ Set up stickshaker for one agent or for both. Each agent is optional.
    uv run stickshaker run -v
    ```
 
+   The yoke icon appears in the menu bar. Click it to turn the sounds on or off, see the last sound, or quit. The on/off setting stays after a restart. To run without the icon, add `--headless`.
+
 2. In a different terminal, check the setup:
 
    ```sh
@@ -90,7 +92,7 @@ To go back to silent mode, install the hooks again without `--debug`.
 
 ### Stop and remove
 
-1. To stop the daemon, push `Ctrl-C` in its terminal.
+1. To stop the daemon, click **Quit stickshaker** in the menu, or push `Ctrl-C` in its terminal.
 2. To remove the hooks:
 
    ```sh

@@ -5,7 +5,7 @@ import socket
 import time
 from pathlib import Path
 
-from stickshaker import install
+from stickshaker import install, state
 from stickshaker.codex import CODEX_MEMORIES
 from stickshaker.server import SOCKET_PATH
 
@@ -80,6 +80,7 @@ def run(
     if set_up == 0:
         report(False, "no agent hooks installed: run `stickshaker install-hooks` and/or `stickshaker install-hooks --codex`")
 
+    info(f"sounds {'enabled' if state.get_enabled() else 'disabled'} (menu bar toggle)")
     if codex_memories.is_dir():
         info(f"Codex memories folder found at {codex_memories}; the daemon watches it")
     else:

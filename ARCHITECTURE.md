@@ -41,6 +41,8 @@ Hooks must not make the agent slow. Thus the hook does no work. The daemon does 
 | `stickshaker/codex.py` | Watches `~/.codex/memories/` for Codex memory writes. |
 | `stickshaker/player.py` | Plays events in sequence on one worker thread. |
 | `stickshaker/server.py` | Receives hook JSON on a Unix socket. |
+| `stickshaker/menubar.py` | The menu bar icon and menu. |
+| `stickshaker/state.py` | Keeps the Enabled/Disabled setting in macOS user defaults. |
 | `stickshaker/install.py` | Adds and removes stickshaker hooks in Claude Code `settings.json` and Codex `hooks.json`. |
 | `stickshaker/doctor.py` | Checks the daemon, the socket, and the hooks. |
 | `stickshaker/cli.py` | The `stickshaker` command. |
@@ -124,8 +126,9 @@ render(data: bytes, size: int | None, kind: str, rate: int, bits: int) -> np.nda
 
 - One sound plays at a time.
 - The queue holds a maximum of 2 events. The player drops more events. Thus a burst of events gives a maximum of 3 sounds (1 playing, 2 waiting).
-- The `enabled` flag stops all sounds. The menu bar will use this flag.
+- The `enabled` flag stops all sounds. The menu bar sets it (see "Menu bar").
 - `render` and `play` are parameters. The tests replace them, so the tests make no sound.
+- Before each sound, the player restarts PortAudio. PortAudio reads the list of devices only when it starts. After an output device change (for example, headphones), an old list causes `Internal PortAudio error [PaErrorCode -9986]`, or it sends the sound to the old device. The restart takes approximately 2 ms. It uses private `sounddevice` functions (`_terminate`, `_initialize`), because the public API has no refresh function.
 
 ## Memory detection
 
@@ -301,12 +304,33 @@ The output level is `AMP` (0.1). The macOS system volume controls the final leve
    - If a daemon answers, stop with exit code 1. Only one daemon can run.
    - If no daemon answers, the file is old. Delete it.
 2. Make the socket and set permissions to `0600`.
-3. Start the player worker thread.
-4. Wait for connections.
+3. Start the player worker thread. Read the Enabled/Disabled setting.
+4. Start the Codex memories watcher if `~/.codex/memories/` exists.
+5. Start the server on a background thread, and show the menu bar icon on the main thread. With `--headless`, the server runs on the main thread and there is no icon.
 
 ### Stop
 
-`Ctrl-C` and `SIGTERM` stop the server, delete the socket file, and stop the player.
+Quit (in the menu), `Ctrl-C`, and `SIGTERM` stop the daemon. The daemon then stops the watcher, stops the server, deletes the socket file, and stops the player.
+
+In menu bar mode, Cocoa controls the main thread, so Python signal handlers do not run. The daemon uses `PyObjCTools.MachSignals`, which sends signals through the Cocoa run loop. The stop function calls `NSApp.stop_` and posts an empty event. It does not use `AppHelper.stopEventLoop()`, because that calls `NSApp.terminate_`, which ends the process before the cleanup.
+
+## Menu bar
+
+The menu bar icon is the yoke from `assets/stickshaker.svg`. It is a template image, so macOS sets its color for light and dark menu bars. The daemon is a menu bar accessory, so it has no Dock icon.
+
+| Menu item | Function |
+|---|---|
+| Enabled | Turns the sounds on or off. When off, the player drops all events, and the icon looks dimmed. |
+| Last: … | Shows the last sound: agent, kind, size, and time. |
+| Quit stickshaker | Stops the daemon. |
+
+The menu uses PyObjC (`pyobjc-framework-Cocoa`) directly. The `rumps` library was not used, because its last release was in 2022.
+
+### Enabled/Disabled setting
+
+The setting is in macOS user defaults, in the domain `com.reckoner165.stickshaker` (`~/Library/Preferences/com.reckoner165.stickshaker.plist`). It stays after a restart. If there is no value, sounds are on. `stickshaker install-hooks` sets the value to on.
+
+To read the value from a terminal: `defaults read com.reckoner165.stickshaker enabled`.
 
 ## Diagnostics
 
@@ -331,7 +355,8 @@ The event line shows the outcome: `queued`, `dropped: disabled`, or `dropped: qu
 2. Does the daemon answer? It sends a test `PostCompact` event with a summary and measures the round trip. This event always makes a sound.
 3. For each agent (Claude Code, Codex): are its hooks installed? Which mode does each hook use? Each agent is optional. If an agent has some stickshaker hooks, all its hooks must be there.
 4. Is at least one agent set up? If no agent has stickshaker hooks, this is an error.
-5. Does `~/.codex/memories/` exist? This is information only.
+5. Is the Enabled/Disabled setting on? This is information only.
+6. Does `~/.codex/memories/` exist? This is information only.
 
 ### Hook timing in Claude Code
 
@@ -354,7 +379,7 @@ The event line shows the outcome: `queued`, `dropped: disabled`, or `dropped: qu
 
 | Command | Function |
 |---|---|
-| `uv run stickshaker run [-v]` | Start the daemon. |
+| `uv run stickshaker run [-v] [--headless]` | Start the daemon with the menu bar icon, or without it. |
 | `uv run stickshaker install-hooks [--codex] [--debug]` | Install the hooks for Claude Code, or for Codex. |
 | `uv run stickshaker uninstall-hooks [--codex]` | Remove the hooks. |
 | `uv run stickshaker doctor` | Check the daemon and the hooks. |
@@ -373,6 +398,7 @@ Hooks load when an agent session starts. After you install or change the hooks, 
 | `tests/test_install.py` | Merge, idempotence, mode change, uninstall, backup. |
 | `tests/test_synth.py` | Plan decisions: voices, content pitch, durations, truncation, newline pauses. |
 | `tests/test_doctor.py` | Each agent optional, at least one required, partial installs reported. |
+| `tests/test_state.py` | Enabled/Disabled setting in a temporary defaults domain, and the player's played-event callback. |
 | `tests/test_codex.py` | Codex payloads as documented, the `sed` tag, Codex install, and the memories watcher with real FSEvents. |
 
 The tests make no sound. They replace `render` and `play` with fakes.
@@ -383,8 +409,7 @@ Unix socket paths on macOS have a limit of approximately 104 bytes. The tests ma
 
 | Item | Status |
 |---|---|
-| Output device change | PortAudio can continue to use the old output device after you change the device. Not examined. |
+| Output device change | Fixed with a PortAudio restart before each sound (see "Player"). Not yet tested with a real device change. |
 | Spectrum notches | The reference spectrum has dips at approximately 4.35 kHz and 9 kHz. Add them to `tone()` later. |
 | Codex: not tested with a real Codex | All Codex behavior comes from the Codex docs. See "Not verified" in the Codex section. |
-| Menu bar | Stage 5. Icon with Enable/Disable. Uses `Player.enabled`. Save the state in `~/.config/stickshaker/state.json`. |
 | Start at login | Later. Use a launchd agent. |
