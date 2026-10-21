@@ -220,6 +220,8 @@ There is no Codex installation to test on. These items come from the docs only:
 
 ## Sound
 
+For the relationship between the data and the sound, the reference spectrum, and the spectrograms, see [design.md](design.md).
+
 ### Encoding
 
 The synth uses the ZX Spectrum ROM tape format. Times are in Z80 T-states at 3.5 MHz.
@@ -429,6 +431,6 @@ Unix socket paths on macOS have a limit of approximately 104 bytes. The tests ma
 | Item | Status |
 |---|---|
 | Output device change | Fixed with a PortAudio restart before each sound (see "Player"). Not yet tested with a real device change. |
-| Spectrum notches | The reference spectrum has dips at approximately 4.35 kHz and 9 kHz. Add them to `tone()` later. |
+| Spectrum notches | The reference spectrum has notches at approximately 3.9 to 4.5 kHz and 7.6 to 8.9 kHz (see [design.md](design.md)). Add them to `tone()` later. |
 | Codex: not tested with a real Codex | All Codex behavior comes from the Codex docs. See "Not verified" in the Codex section. |
 | Start at login | Later. Use a launchd agent. |
